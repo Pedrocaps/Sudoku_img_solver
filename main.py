@@ -10,6 +10,12 @@ def show_list_images(images, time):
 
 
 def pre_process_image(image):
+    """
+    Function to pre process image
+    :param image:
+    :return: the image, a grayed,  blured,  thresholded and one dilated version of the original image
+    """
+    dilate = None
     try:
         bgr = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     except TypeError:
@@ -50,7 +56,18 @@ def draw_contour_square(c, image, show, time=150):
         cv2.waitKey(time)
 
 
-def find_inner_squares(image_arg, filtered_image, show=False):
+def draw_squares(image, points, color=(0, 255, 0), time=0):
+    for x, y, w, h in points:
+        cv2.rectangle(image, (x, y), (x + w, y + h), color, 2)
+        show_list_images([image], time)
+
+
+def find_inner_squares(filtered_image) -> list:
+    """
+    Find and return the inner squares. If cant find 81, a exception is raised
+    :param filtered_image:
+    :return: a list with the inner squares
+    """
     invert = 255 - filtered_image
     cnts = cv2.findContours(invert, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
     cnts = cnts[0] if len(cnts) == 2 else cnts[1]
@@ -77,26 +94,31 @@ def find_inner_squares(image_arg, filtered_image, show=False):
     squares = []
     for row in sudoku_rows:
         for c in row:
-            draw_contour_square(c, image_arg, show)
-
             peri = cv2.arcLength(c, True)
             approx = cv2.approxPolyDP(c, 0.02 * peri, True)
             x, y, w, h = cv2.boundingRect(approx)
             squares.append([x, y, w, h])
 
-    return image_arg, squares
+    if len(squares) != 81:
+        raise AttributeError('Could not find all inner squares')
+
+    return squares
 
 
-def find_outer_square(image, thresh):
+def find_outer_square(thresh) -> list:
+    """
+    Find the biggest square in the image, probably the one indicating the sudoku
+    :param thresh: a pre processed version of the image
+    :return: an array indicating the biggest square
+    """
     cnts, hierarchy = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
     index_sort = sorted(range(len(cnts)), key=lambda a: cv2.contourArea(cnts[a]), reverse=True)
 
     peri = cv2.arcLength(cnts[index_sort[0]], True)
     approx = cv2.approxPolyDP(cnts[index_sort[0]], 0.02 * peri, True)
+    [x, y, w, h] = cv2.boundingRect(approx)
 
-    cv2.polylines(image, [approx], True, (0, 0, 255), 3)
-
-    return image
+    return [x, y, w, h]
 
 
 def sort_rows(fixed_image):
@@ -183,7 +205,13 @@ def prepare_last_image(contours_arg, cropped):
     return img
 
 
-def find_numbers(image, squares):
+def find_numbers(image, squares) -> list:
+    """
+    find the numbers inside the squares
+    :param image:
+    :param squares:
+    :return: a list with the sudoku puzzle to solve
+    """
     invert = 255 - image
     i = 1
     rows = []
@@ -213,10 +241,15 @@ def find_numbers(image, squares):
 
         i = i + 1
 
-    return invert, rows
+    return rows
 
 
-def recon_numbers(img):
+def recon_numbers(img) -> int:
+    """
+    find the image with the least difference between model and the image passed
+    :param img:
+    :return: the number associated with that image
+    """
     best_rank_match_diff = 10000
     best_rank_name = ''
     for x in range(1, 10):
@@ -231,24 +264,64 @@ def recon_numbers(img):
     return int(best_rank_name.split('.')[0])
 
 
+def check_possible(grid, y, x, n) -> bool:
+    for i in range(0, 9):
+        if grid[y][i] == n:
+            return False
+
+    for i in range(0, 9):
+        if grid[i][x] == n:
+            return False
+
+    x0 = (x // 3) * 3
+    y0 = (y // 3) * 3
+
+    for i in range(0, 3):
+        for j in range(0, 3):
+            if grid[y0+i][x0+j] == n:
+                return False
+
+    return True
+
+
+def solve_game(grid, img, squares) -> list:
+    for y in range(9):
+        for x in range(9):
+            if grid[y][x] == 0:
+                for n in range(1, 10):
+                    if check_possible(grid, y, x, n):
+                        grid[y][x] = n
+                        # cv2.putText(img, str(n), (300, 200), cv2.FONT_HERSHEY_COMPLEX, 1, (0, 150, 0), 3)
+                        solve_game(grid)
+                        grid[y][x] = 0
+
+    return grid
+
+
 def my_solution(image_path):
     # Load and process image
     image = cv2.imread(image_path)
     bgr, gray, gauss, thresh, filtered, dilate = pre_process_image(image)
 
-    outer_sqr_img = find_outer_square(bgr.copy(), dilate)
-    inner_square_img, squares = find_inner_squares(outer_sqr_img.copy(), dilate, False)
+    [x, y, w, h] = find_outer_square(dilate)
+    outer_sqr_img = cv2.rectangle(bgr.copy(), (x, y), (x + w, y + h), (0, 0, 255), 2)
 
-    find_numbers(bgr, squares)
+    squares = find_inner_squares(dilate)
+    inner_square_image = bgr.copy()
+    for x, y, w, h in squares:
+        cv2.rectangle(inner_square_image, (x, y), (x + w, y + h), (0, 255, 0), 2)
+
+    grid = find_numbers(bgr, squares)
+    solved_game = solve_game(grid, bgr.copy(), squares)
 
     imgStack = stack_images(0.8, ([bgr, gray, gauss, thresh],
-                                  [filtered, dilate, outer_sqr_img, inner_square_img]))
+                                  [filtered, dilate, outer_sqr_img, inner_square_image]))
     cv2.imshow("Stack", imgStack)
     cv2.waitKey(0)
 
 
-# https://pt.sudoku-online.net/
-SUDOKU_FOLDER_F = 'sudoku_5'
-SUDOKU_IMG_PATH = f'Resources/{SUDOKU_FOLDER_F}.png'
-# digit_recon = DigitRecognizer(r'Resources\my_model_2.h5')
-my_solution(SUDOKU_IMG_PATH)
+if __name__ == '__main__':
+    # https://pt.sudoku-online.net/
+    sudoku_img = 'sudoku_5'
+    sudoku_img_path = f'Resources/{sudoku_img}.png'
+    my_solution(sudoku_img_path)
