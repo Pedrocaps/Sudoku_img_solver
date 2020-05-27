@@ -1,11 +1,13 @@
+from copy import deepcopy
+
 import cv2
 import numpy as np
 from imutils import contours
 
 
-def show_list_images(images, time):
+def show_list_images(images, time, title='images', ):
     for img in images:
-        cv2.imshow('images', img)
+        cv2.imshow(title, img)
         cv2.waitKey(time)
 
 
@@ -56,12 +58,6 @@ def draw_contour_square(c, image, show, time=150):
         cv2.waitKey(time)
 
 
-def draw_squares(image, points, color=(0, 255, 0), time=0):
-    for x, y, w, h in points:
-        cv2.rectangle(image, (x, y), (x + w, y + h), color, 2)
-        show_list_images([image], time)
-
-
 def find_inner_squares(filtered_image) -> list:
     """
     Find and return the inner squares. If cant find 81, a exception is raised
@@ -91,7 +87,9 @@ def find_inner_squares(filtered_image) -> list:
             row = []
         i = i + 1
 
+    rows = []
     squares = []
+    i = 1
     for row in sudoku_rows:
         for c in row:
             peri = cv2.arcLength(c, True)
@@ -99,10 +97,15 @@ def find_inner_squares(filtered_image) -> list:
             x, y, w, h = cv2.boundingRect(approx)
             squares.append([x, y, w, h])
 
-    if len(squares) != 81:
+            if i % 9 == 0:
+                rows.append(squares)
+                squares = []
+            i = i + 1
+
+    if len(rows) != 9:
         raise AttributeError('Could not find all inner squares')
 
-    return squares
+    return rows
 
 
 def find_outer_square(thresh) -> list:
@@ -205,7 +208,7 @@ def prepare_last_image(contours_arg, cropped):
     return img
 
 
-def find_numbers(image, squares) -> list:
+def find_numbers(image, grid) -> list:
     """
     find the numbers inside the squares
     :param image:
@@ -216,30 +219,31 @@ def find_numbers(image, squares) -> list:
     i = 1
     rows = []
     columns = []
-    for square in squares:
-        x, y, w, h = square
-        cv2.rectangle(invert, (x, y), (x + w, y + h), (0, 255, 0), 2)
-        cropped = image[y:y + w, x:x + h]
+    for square in grid:
+        for x, y, w, h in square:
 
-        cropped = cv2.resize(cropped, (200, 200))
-        blur = cv2.bilateralFilter(cropped, 20, 75, 75)
-        ret, thresh1 = cv2.threshold(blur, 200, 255, cv2.THRESH_BINARY)
-        thresh_bw = cv2.cvtColor(thresh1, cv2.COLOR_BGR2GRAY)
+            cv2.rectangle(invert, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            cropped = image[y:y + w, x:x + h]
 
-        cnts, hierarchy = cv2.findContours(thresh_bw, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-        if len(cnts) > 1:
-            img = prepare_last_image(cnts, thresh_bw)
+            cropped = cv2.resize(cropped, (200, 200))
+            blur = cv2.bilateralFilter(cropped, 20, 75, 75)
+            ret, thresh1 = cv2.threshold(blur, 200, 255, cv2.THRESH_BINARY)
+            thresh_bw = cv2.cvtColor(thresh1, cv2.COLOR_BGR2GRAY)
 
-            number = recon_numbers(img)
-            columns.append(number)
-        else:
-            columns.append(0)
+            cnts, hierarchy = cv2.findContours(thresh_bw, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+            if len(cnts) > 1:
+                img = prepare_last_image(cnts, thresh_bw)
 
-        if i % 9 == 0:
-            rows.append(columns)
-            columns = []
+                number = recon_numbers(img)
+                columns.append(number)
+            else:
+                columns.append(0)
 
-        i = i + 1
+            if i % 9 == 0:
+                rows.append(columns)
+                columns = []
+
+            i = i + 1
 
     return rows
 
@@ -264,60 +268,116 @@ def recon_numbers(img) -> int:
     return int(best_rank_name.split('.')[0])
 
 
-def check_possible(grid, y, x, n) -> bool:
-    for i in range(0, 9):
-        if grid[y][i] == n:
+def check_possible(grid, num, pos):
+    # Check row
+    for i in range(len(grid[0])):
+        if grid[pos[0]][i] == num and pos[1] != i:
             return False
 
-    for i in range(0, 9):
-        if grid[i][x] == n:
+    # Check column
+    for i in range(len(grid)):
+        if grid[i][pos[1]] == num and pos[0] != i:
             return False
 
-    x0 = (x // 3) * 3
-    y0 = (y // 3) * 3
+    # Check box
+    box_x = pos[1] // 3
+    box_y = pos[0] // 3
 
-    for i in range(0, 3):
-        for j in range(0, 3):
-            if grid[y0+i][x0+j] == n:
+    for i in range(box_y * 3, box_y * 3 + 3):
+        for j in range(box_x * 3, box_x * 3 + 3):
+            if grid[i][j] == num and (i, j) != pos:
                 return False
 
     return True
 
 
-def solve_game(grid, img, squares) -> list:
-    for y in range(9):
-        for x in range(9):
-            if grid[y][x] == 0:
-                for n in range(1, 10):
-                    if check_possible(grid, y, x, n):
-                        grid[y][x] = n
-                        # cv2.putText(img, str(n), (300, 200), cv2.FONT_HERSHEY_COMPLEX, 1, (0, 150, 0), 3)
-                        solve_game(grid)
-                        grid[y][x] = 0
+def find_empty(grid):
+    for i in range(len(grid)):
+        for j in range(len(grid[0])):
+            if grid[i][j] == 0:
+                return i, j  # row, col
 
-    return grid
+    return None
+
+
+def solve_game(grid, img, squares, show, window_name) -> bool:
+    find = find_empty(grid)
+    if not find:
+        return True
+    else:
+        row, col = find
+
+    for i in range(1, 10):
+        if check_possible(grid, i, (row, col)):
+            grid[row][col] = i
+
+            if show:
+                sudoku = draw_grid(img.copy(), grid_orig, grid, squares)
+                cv2.imshow(window_name, sudoku)
+                cv2.waitKey(35)
+
+            if solve_game(grid, img, squares, show, window_name):
+                return True
+
+            grid[row][col] = 0
+
+    return False
+
+
+def draw_rectangle(img, rows, color, size, show, time, title='image'):
+    if type(rows[0]) == int:
+        x, y, w, h = rows
+        cv2.rectangle(img, (x, y), (x + w, y + h), color, size)
+        if show:
+            show_list_images([img], time, title)
+    else:
+        for row in rows:
+            for x, y, w, h in row:
+                cv2.rectangle(img, (x, y), (x + w, y + h), color, size)
+                if show:
+                    show_list_images([img], time, title)
+
+    return img
 
 
 def my_solution(image_path):
-    # Load and process image
+    # process image
     image = cv2.imread(image_path)
     bgr, gray, gauss, thresh, filtered, dilate = pre_process_image(image)
 
     [x, y, w, h] = find_outer_square(dilate)
-    outer_sqr_img = cv2.rectangle(bgr.copy(), (x, y), (x + w, y + h), (0, 0, 255), 2)
+    outer_sqr_img = draw_rectangle(bgr.copy(), [x, y, w, h], (0, 0, 255), 2, False, 0)
 
-    squares = find_inner_squares(dilate)
-    inner_square_image = bgr.copy()
-    for x, y, w, h in squares:
-        cv2.rectangle(inner_square_image, (x, y), (x + w, y + h), (0, 255, 0), 2)
+    show_list_images([bgr, gray, gauss, thresh, filtered, dilate, outer_sqr_img], 350, 'SUDOKU')
 
-    grid = find_numbers(bgr, squares)
-    solved_game = solve_game(grid, bgr.copy(), squares)
+    rows = find_inner_squares(dilate)
+    inner_sqr_img = draw_rectangle(outer_sqr_img.copy(), rows, (0, 255, 0), 2, True, 20, 'SUDOKU')
 
-    imgStack = stack_images(0.8, ([bgr, gray, gauss, thresh],
-                                  [filtered, dilate, outer_sqr_img, inner_square_image]))
-    cv2.imshow("Stack", imgStack)
-    cv2.waitKey(0)
+    show_list_images([inner_sqr_img], 1, 'SUDOKU')
+
+    grid = find_numbers(bgr, rows)
+    global grid_orig
+    grid_orig = deepcopy(grid)
+
+    solve_game(grid, outer_sqr_img.copy(), rows, True, 'SUDOKU')
+
+    sudoku = draw_grid(outer_sqr_img.copy(), grid_orig, grid, rows)
+    show_list_images([sudoku], 0, 'SUDOKU')
+
+
+def draw_grid(img, grid_orig, grid, squares):
+    for row in range(0, 9):
+        for column in range(0, 9):
+            x, y, w, h = squares[column][row]
+
+            if grid_orig[row][column] != 0:
+                continue
+
+            pos = (int((2 * y + h - 20) / 2), int((2 * x + w + 20) / 2))
+            number = str(grid[row][column])
+            cv2.putText(img, number, pos, cv2.FONT_HERSHEY_COMPLEX, 1, (0, 255, 0), 3)
+
+    return img
 
 
 if __name__ == '__main__':
