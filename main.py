@@ -58,14 +58,19 @@ def draw_contour_square(c, image, show, time=150):
         cv2.waitKey(time)
 
 
-def find_inner_squares(filtered_image) -> list:
+def find_inner_squares(filtered_image, size) -> list:
     """
     Find and return the inner squares. If cant find 81, a exception is raised
-    :param filtered_image:
+    :param filtered_image: prepared image
+    :param size: coordinates of the outer square
     :return: a list with the inner squares
     """
+
     invert = 255 - filtered_image
-    cnts = cv2.findContours(invert, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+
+    x, y, w, h = size
+
+    cnts = cv2.findContours(invert[y:(y + h), x:(x + w)], cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE, offset=(x, y))
     cnts = cnts[0] if len(cnts) == 2 else cnts[1]
     cnts = cnts[1:]
     (cnts, _) = contours.sort_contours(cnts, method="top-to-bottom")
@@ -160,7 +165,6 @@ def stack_images(scale, img_array):
                 if len(img_array[x][y].shape) == 2: img_array[x][y] = cv2.cvtColor(img_array[x][y], cv2.COLOR_GRAY2BGR)
         imageBlank = np.zeros((height, width, 3), np.uint8)
         hor = [imageBlank] * rows
-        hor_con = [imageBlank] * rows
         for x in range(0, rows):
             hor[x] = np.hstack(img_array[x])
         ver = np.vstack(hor)
@@ -208,7 +212,7 @@ def prepare_last_image(contours_arg, cropped):
     return img
 
 
-def find_numbers(image, grid) -> list:
+def find_numbers(image, squares) -> list:
     """
     find the numbers inside the squares
     :param image:
@@ -219,7 +223,7 @@ def find_numbers(image, grid) -> list:
     i = 1
     rows = []
     columns = []
-    for square in grid:
+    for square in squares:
         for x, y, w, h in square:
 
             cv2.rectangle(invert, (x, y), (x + w, y + h), (0, 255, 0), 2)
@@ -312,9 +316,9 @@ def solve_game(grid, img, squares, show, window_name) -> bool:
             grid[row][col] = i
 
             if show:
-                sudoku = draw_grid(img.copy(), grid_orig, grid, squares)
+                sudoku = draw_grid(img.copy(), grid, squares)
                 cv2.imshow(window_name, sudoku)
-                cv2.waitKey(35)
+                cv2.waitKey(5)
 
             if solve_game(grid, img, squares, show, window_name):
                 return True
@@ -345,13 +349,13 @@ def my_solution(image_path):
     image = cv2.imread(image_path)
     bgr, gray, gauss, thresh, filtered, dilate = pre_process_image(image)
 
-    [x, y, w, h] = find_outer_square(dilate)
-    outer_sqr_img = draw_rectangle(bgr.copy(), [x, y, w, h], (0, 0, 255), 2, False, 0)
+    outer_square = find_outer_square(dilate)
+    outer_sqr_img = draw_rectangle(bgr.copy(), outer_square, (0, 0, 255), 2, False, 0)
 
-    show_list_images([bgr, gray, gauss, thresh, filtered, dilate, outer_sqr_img], 350, 'SUDOKU')
+    show_list_images([bgr, gray, gauss, thresh, filtered, dilate, outer_sqr_img], 300, 'SUDOKU')
 
-    rows = find_inner_squares(dilate)
-    inner_sqr_img = draw_rectangle(outer_sqr_img.copy(), rows, (0, 255, 0), 2, True, 20, 'SUDOKU')
+    rows = find_inner_squares(dilate, outer_square)
+    inner_sqr_img = draw_rectangle(outer_sqr_img.copy(), rows, (0, 255, 0), 2, False, 20, 'SUDOKU')
 
     show_list_images([inner_sqr_img], 1, 'SUDOKU')
 
@@ -361,20 +365,20 @@ def my_solution(image_path):
 
     solve_game(grid, outer_sqr_img.copy(), rows, True, 'SUDOKU')
 
-    sudoku = draw_grid(outer_sqr_img.copy(), grid_orig, grid, rows)
+    sudoku = draw_grid(outer_sqr_img.copy(), grid, rows)
     show_list_images([sudoku], 0, 'SUDOKU')
 
 
-def draw_grid(img, grid_orig, grid, squares):
-    for row in range(0, 9):
-        for column in range(0, 9):
+def draw_grid(img, grid, squares):
+    for column in range(0, 9):
+        for row in range(0, 9):
             x, y, w, h = squares[column][row]
 
-            if grid_orig[row][column] != 0:
+            if grid_orig[column][row] != 0:
                 continue
 
-            pos = (int((2 * y + h - 20) / 2), int((2 * x + w + 20) / 2))
-            number = str(grid[row][column])
+            pos = (int((2 * x + w - 20) / 2), int((2 * y + h + 20) / 2))
+            number = str(grid[column][row])
             cv2.putText(img, number, pos, cv2.FONT_HERSHEY_COMPLEX, 1, (0, 255, 0), 3)
 
     return img
@@ -382,6 +386,6 @@ def draw_grid(img, grid_orig, grid, squares):
 
 if __name__ == '__main__':
     # https://pt.sudoku-online.net/
-    sudoku_img = 'sudoku_5'
+    sudoku_img = 'sudoku_hard'
     sudoku_img_path = f'Resources/{sudoku_img}.png'
     my_solution(sudoku_img_path)
