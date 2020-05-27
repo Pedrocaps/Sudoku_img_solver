@@ -1,4 +1,4 @@
-# Sudoku_img_solver
+# Solver Sudoku
 
 Algoritmo em Python que recebe uma imagem do jogo Sudoku, a reconhece e resolve o problema exibindo na tela.
 
